@@ -1,71 +1,17 @@
-# DDoS Protection Configuration
-
-# API Keys
-OPENAI_API_KEY: 'your-api-key-here'
-
-# Time settings
-BLOCK_TIME: 300  # seconds
-TIME_WINDOW: 60  # seconds
-MAX_AI_RESPONSE_TIME: 5  # seconds
-
-# Network traffic thresholds
-MAX_CONNECTIONS_PER_IP: 100
-SYN_FLOOD_THRESHOLD: 100
-UDP_FLOOD_THRESHOLD: 1000
-ICMP_FLOOD_THRESHOLD: 50
-HTTP_FLOOD_THRESHOLD: 200
-PACKET_RATE_THRESHOLD: 1000  # packets per second
-BANDWIDTH_THRESHOLD: 10485760  # 10 MB/s in bytes
-
-# Server health thresholds
-CPU_THRESHOLD: 80  # percentage
-MEMORY_THRESHOLD: 80  # percentage
-DISK_IO_THRESHOLD: 80  # MB/s
-
-# CAPTCHA settings
-CAPTCHA_LENGTH: 6
-CAPTCHA_EXPIRY: 300  # seconds
-CAPTCHA_MAX_ATTEMPTS: 3
-
-# Whitelist
-WHITELIST:
-  - '192.168.1.1'
-  - '10.0.0.1'
-
-# AI Prompt Template
+OPENAI_API_KEY: "your_openai_api_key"
+OPENAI_API_URL: "https://api.openai.com/v1/engines/gpt-3.5-turbo/completions"
 AI_PROMPT_TEMPLATE: |
-  You are an AI assistant focused on maintaining server stability and performance while protecting against DDoS attacks. 
-  Analyze the following network traffic data and server health metrics. Suggest appropriate actions to mitigate potential threats 
-  while ensuring the server continues to operate smoothly.
-
-  Server Health Metrics:
+  The current server status is as follows:
   - CPU Usage: {cpu_usage}%
   - Memory Usage: {memory_usage}%
-  - Disk I/O Utilization: {disk_io}%
-
-  Network Traffic Data:
+  - Disk I/O: {disk_io} operations/sec
+  The following traffic data has been recorded:
   {traffic_data}
-
-  Consider the following options and their impact on server performance:
-  1. Block IP (most severe, may impact legitimate traffic if used too broadly)
-  2. Temporary block (moderate, allows recovery of false positives)
-  3. Rate limit (less severe, helps manage traffic without full blocking)
-  4. CAPTCHA challenge (for potential bot activity, may slow down legitimate users)
-  5. Add to watchlist (for mild suspicion, no immediate impact)
-  6. Adjust server resources (e.g., scaling up, load balancing)
-  7. No action (if behavior seems normal)
-
-  Provide your recommendation as a single word (e.g., "block", "temp_block", "rate_limit", "captcha", "watchlist", "adjust_resources", "none"), 
-  followed by a brief explanation. Prioritize server stability and performance in your decision.
-
-# Logging Configuration
-LOG_LEVEL: INFO
-LOG_FILE_MAX_SIZE: 10485760  # 10 MB
-LOG_FILE_BACKUP_COUNT: 5
-
-# Database Configuration
-DB_NAME: 'network_monitor.db'
-
-# Web Server Configuration (for CAPTCHA)
-CAPTCHA_SERVER_HOST: '0.0.0.0'
-CAPTCHA_SERVER_PORT: 5000
+  Based on this information, please advise on the appropriate actions to take.
+CPU_THRESHOLD: 80
+MEMORY_THRESHOLD: 80
+PACKET_RATE_THRESHOLD: 1000
+SYN_FLOOD_THRESHOLD: 200
+HTTP_FLOOD_THRESHOLD: 300
+WHITELIST: ["192.168.1.1", "10.0.0.1"]
+MAX_AI_RESPONSE_TIME: 10
