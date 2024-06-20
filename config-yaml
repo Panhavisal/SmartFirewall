@@ -1,0 +1,22 @@
+# DDoS Protection Configuration
+
+# API Keys
+OPENAI_API_KEY: 'your-api-key-here'
+
+# Time settings
+BLOCK_TIME: 300  # seconds
+TIME_WINDOW: 60  # seconds
+
+# Thresholds
+MAX_CONNECTIONS_PER_IP: 100
+SYN_FLOOD_THRESHOLD: 100
+UDP_FLOOD_THRESHOLD: 1000
+ICMP_FLOOD_THRESHOLD: 50
+HTTP_FLOOD_THRESHOLD: 200
+PACKET_RATE_THRESHOLD: 1000  # packets per second
+BANDWIDTH_THRESHOLD: 10485760  # 10 MB/s in bytes
+
+# Whitelist
+WHITELIST:
+  - '192.168.1.1'
+  - '10.0.0.1'
