@@ -8,6 +8,7 @@ import time
 import threading
 import sqlite3
 from scapy.all import sniff, IP
+from datetime import datetime, timedelta
 
 # Function to install required libraries
 def install(package):
@@ -43,7 +44,9 @@ config = {
     "SYN_FLOOD_THRESHOLD": 200,
     "HTTP_FLOOD_THRESHOLD": 300,
     "WHITELIST": ["192.168.1.1", "10.0.0.1"],  # Add server IP to whitelist
-    "MAX_AI_RESPONSE_TIME": 10
+    "MAX_AI_RESPONSE_TIME": 10,
+    "TEMP_BLOCK_DURATION": 300,  # Temporary block duration in seconds
+    "PERMANENT_BLOCK_THRESHOLD": 3  # Number of times an IP can be temporarily blocked before permanent block
 }
 
 OPENAI_API_KEY = config.get("OPENAI_API_KEY")
@@ -56,6 +59,8 @@ SYN_FLOOD_THRESHOLD = config.get("SYN_FLOOD_THRESHOLD", 200)
 HTTP_FLOOD_THRESHOLD = config.get("HTTP_FLOOD_THRESHOLD", 300)
 WHITELIST = config.get("WHITELIST", [])
 MAX_AI_RESPONSE_TIME = config.get("MAX_AI_RESPONSE_TIME", 5)
+TEMP_BLOCK_DURATION = config.get("TEMP_BLOCK_DURATION", 300)
+PERMANENT_BLOCK_THRESHOLD = config.get("PERMANENT_BLOCK_THRESHOLD", 3)
 
 # Set up logging
 logging.basicConfig(filename='log.txt', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -71,7 +76,7 @@ def init_db():
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS traffic (
-            ip TEXT,
+            ip TEXT PRIMARY KEY,
             packet_count INTEGER,
             bandwidth_usage INTEGER,
             syn_count INTEGER,
@@ -80,6 +85,14 @@ def init_db():
             http_count INTEGER,
             connection_count INTEGER,
             last_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS blocked_ips (
+            ip TEXT PRIMARY KEY,
+            block_type TEXT,
+            block_count INTEGER DEFAULT 0,
+            block_until TIMESTAMP
         )
     ''')
     conn.commit()
@@ -115,6 +128,46 @@ def get_traffic_data():
     data = cursor.fetchall()
     conn.close()
     return data
+
+def get_blocked_ips():
+    conn = sqlite3.connect('traffic_data.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT ip, block_type, block_until FROM blocked_ips WHERE block_until > CURRENT_TIMESTAMP')
+    data = cursor.fetchall()
+    conn.close()
+    return {ip: (block_type, block_until) for ip, block_type, block_until in data}
+
+def block_ip(ip, block_type, duration=None):
+    conn = sqlite3.connect('traffic_data.db')
+    cursor = conn.cursor()
+    if duration:
+        block_until = datetime.now() + timedelta(seconds=duration)
+        cursor.execute('''
+            INSERT INTO blocked_ips (ip, block_type, block_count, block_until)
+            VALUES (?, ?, 1, ?)
+            ON CONFLICT(ip) DO UPDATE SET
+            block_type = ?,
+            block_count = block_count + 1,
+            block_until = ?
+        ''', (ip, block_type, block_until, block_type, block_until))
+    else:
+        cursor.execute('''
+            INSERT INTO blocked_ips (ip, block_type, block_count, block_until)
+            VALUES (?, ?, 1, DATETIME('now', '+100 years'))
+            ON CONFLICT(ip) DO UPDATE SET
+            block_type = ?,
+            block_count = block_count + 1,
+            block_until = DATETIME('now', '+100 years')
+        ''', (ip, block_type, block_type))
+    conn.commit()
+    conn.close()
+
+def unblock_ips():
+    conn = sqlite3.connect('traffic_data.db')
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM blocked_ips WHERE block_until < CURRENT_TIMESTAMP')
+    conn.commit()
+    conn.close()
 
 def get_server_health():
     # Placeholder function to simulate getting server health metrics
@@ -182,8 +235,13 @@ def fallback_analysis(traffic_data, server_health):
 
 def analyze_traffic():
     traffic_data = get_traffic_data()
+    blocked_ips = get_blocked_ips()
+    
     for data in traffic_data:
         ip, packet_count, bandwidth_usage, syn_count, udp_count, icmp_count, http_count, connection_count, last_update = data
+        if ip in blocked_ips:
+            continue
+        
         data_dict = {
             "ip": ip,
             "packet_count": packet_count,
@@ -221,45 +279,28 @@ def take_action(ip, analysis):
     print(f"Taking action '{action}' for IP {ip} with explanation: {explanation}")  # Real-time console notification
     
     if action == "block":
-        block_ip(ip, f"Analysis: {explanation}")
-        ip_database["blacklist"].add(ip)
+        block_ip(ip, "permanent")
+        ai_logger.info(f"Permanently blocked IP {ip} for reason: {explanation}")
     elif action == "temp_block":
-        temp_block_ip(ip, f"Analysis: {explanation}")
+        block_ip(ip, "temporary", TEMP_BLOCK_DURATION)
+        ai_logger.info(f"Temporarily blocked IP {ip} for {TEMP_BLOCK_DURATION} seconds. Reason: {explanation}")
     elif action == "rate_limit":
-        rate_limit_ip(ip, f"Analysis: {explanation}")
+        ai_logger.info(f"Rate limited IP {ip} for reason: {explanation}")
     elif action == "captcha":
-        captcha_challenge_ip(ip, f"Analysis: {explanation}")
+        ai_logger.info(f"Captcha challenge for IP {ip} for reason: {explanation}")
     elif action == "watchlist":
-        add_to_watchlist(ip, f"Analysis: {explanation}")
+        ai_logger.info(f"Added IP {ip} to watchlist for reason: {explanation}")
     elif action == "adjust_resources":
-        adjust_server_resources(f"Analysis: {explanation}")
+        ai_logger.info(f"Adjusted server resources for reason: {explanation}")
     elif action == "none":
         ai_logger.info(f"No action taken for {ip}. Analysis: {explanation}")
         print(f"No action taken for {ip}. Analysis: {explanation}")  # Real-time console notification
     else:
         ai_logger.warning(f"Unknown action '{action}' for {ip}. Using default action.")
         print(f"Unknown action '{action}' for {ip}. Using default action.")  # Real-time console notification
-        add_to_watchlist(ip, f"Unknown action suggested: {explanation}")
+        ai_logger.info(f"Added IP {ip} to watchlist for unknown action. Reason: {explanation}")
 
 # Functions to take actions
-def block_ip(ip, reason):
-    print(f"Blocked IP {ip} for reason: {reason}")
-
-def temp_block_ip(ip, reason):
-    print(f"Temporarily blocked IP {ip} for reason: {reason}")
-
-def rate_limit_ip(ip, reason):
-    print(f"Rate limited IP {ip} for reason: {reason}")
-
-def captcha_challenge_ip(ip, reason):
-    print(f"Captcha challenge for IP {ip} for reason: {reason}")
-
-def add_to_watchlist(ip, reason):
-    print(f"Added IP {ip} to watchlist for reason: {reason}")
-
-def adjust_server_resources(reason):
-    print(f"Adjusted server resources for reason: {reason}")
-
 def capture_traffic(packet):
     if IP in packet:
         ip = packet[IP].src
@@ -290,6 +331,7 @@ def main():
     
     # Main monitoring loop
     while True:
+        unblock_ips()  # Unblock IPs that are temporarily blocked and have passed the duration
         analyze_traffic()
         time.sleep(60)  # Wait for 60 seconds before the next iteration
 
