@@ -1,3 +1,5 @@
+import subprocess
+import sys
 import os
 import requests
 import json
@@ -5,6 +7,21 @@ import logging
 import time
 import threading
 from scapy.all import sniff, IP
+
+# Function to install required libraries
+def install(package):
+    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
+# Auto-install required libraries if not present
+try:
+    import scapy.all
+except ImportError:
+    install('scapy')
+
+try:
+    import requests
+except ImportError:
+    install('requests')
 
 # Configuration Loading
 config = {
