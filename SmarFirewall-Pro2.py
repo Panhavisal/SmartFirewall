@@ -47,6 +47,7 @@ WHITELIST = config.get("WHITELIST", [])
 MAX_AI_RESPONSE_TIME = config.get("MAX_AI_RESPONSE_TIME", 5)
 TEMP_BLOCK_DURATION = config.get("TEMP_BLOCK_DURATION", 300)
 PERMANENT_BLOCK_THRESHOLD = config.get("PERMANENT_BLOCK_THRESHOLD", 3)
+WATCHLIST_DURATION = config.get("WATCHLIST_DURATION", 3600)  # 1 hour default duration
 
 # Set up logging
 logging.basicConfig(filename='log.txt', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -79,6 +80,12 @@ def init_db():
             block_type TEXT,
             block_count INTEGER DEFAULT 0,
             block_until TIMESTAMP
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS watchlist (
+            ip TEXT PRIMARY KEY,
+            watch_until TIMESTAMP
         )
     ''')
     conn.commit()
@@ -161,6 +168,27 @@ def unblock_ips():
     conn.commit()
     conn.close()
 
+def get_watchlist():
+    conn = sqlite3.connect('traffic_data.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT ip, watch_until FROM watchlist WHERE watch_until > CURRENT_TIMESTAMP')
+    data = cursor.fetchall()
+    conn.close()
+    return {ip: watch_until for ip, watch_until in data}
+
+def add_to_watchlist(ip):
+    watch_until = datetime.now() + timedelta(seconds=WATCHLIST_DURATION)
+    conn = sqlite3.connect('traffic_data.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO watchlist (ip, watch_until)
+        VALUES (?, ?)
+        ON CONFLICT(ip) DO UPDATE SET
+        watch_until = ?
+    ''', (ip, watch_until, watch_until))
+    conn.commit()
+    conn.close()
+
 def get_server_health():
     # Placeholder function to simulate getting server health metrics
     return {
@@ -206,156 +234,4 @@ def chatgpt_analyze(traffic_data):
         ai_logger.error(f"Failed to get ChatGPT response: {str(e)}")
         return None
     except Exception as e:
-        ai_logger.error(f"Unexpected error in AI analysis: {str(e)}")
-        return None
-
-def fallback_analysis(traffic_data, server_health):
-    # Simple rule-based analysis
-    if server_health['cpu_usage'] > CPU_THRESHOLD or server_health['memory_usage'] > MEMORY_THRESHOLD:
-        if traffic_data['packet_count'] > PACKET_RATE_THRESHOLD:
-            return "temp_block, High server load and high packet rate detected"
-        else:
-            return "rate_limit, High server load detected"
-    elif traffic_data['syn_count'] > SYN_FLOOD_THRESHOLD:
-        return "temp_block, Potential SYN flood detected"
-    elif traffic_data['http_count'] > HTTP_FLOOD_THRESHOLD:
-        return "captcha, Potential HTTP flood detected"
-    elif traffic_data['packet_count'] > PACKET_RATE_THRESHOLD:
-        return "rate_limit, High packet rate detected"
-    else:
-        return "watchlist, Suspicious activity detected"
-
-def analyze_traffic():
-    traffic_data = get_traffic_data()
-    blocked_ips = get_blocked_ips()
-    
-    for data in traffic_data:
-        ip, packet_count, bandwidth_usage, syn_count, udp_count, icmp_count, http_count, connection_count, last_update = data
-        if ip in blocked_ips:
-            continue
-        
-        data_dict = {
-            "ip": ip,
-            "packet_count": packet_count,
-            "bandwidth_usage": bandwidth_usage,
-            "syn_count": syn_count,
-            "udp_count": udp_count,
-            "icmp_count": icmp_count,
-            "http_count": http_count,
-            "connection_count": connection_count
-        }
-        ai_logger.info(f"Analyzing traffic data for IP {ip}: {data_dict}")
-        print(f"Analyzing traffic data for IP {ip}: {data_dict}")  # Real-time console notification
-        server_health = get_server_health()
-        analysis = chatgpt_analyze(data_dict)
-        if analysis is None:
-            ai_logger.warning("AI analysis failed. Using fallback mechanism.")
-            analysis = fallback_analysis(data_dict, server_health)
-        take_action(ip, analysis)
-
-def take_action(ip, analysis):
-    if ip in WHITELIST:
-        ai_logger.info(f"Skipping action for whitelisted IP: {ip}")
-        print(f"Skipping action for whitelisted IP: {ip}")  # Real-time console notification
-        return
-    
-    if not analysis:
-        ai_logger.warning(f"No analysis available for IP: {ip}. Using default action.")
-        analysis = "watchlist, No analysis available"
-    
-    action, explanation = analysis.lower().split(',', 1)
-    action = action.strip()
-
-    action_prefix = "AI Taking Action" if ai_mode else "BOT Taking Action"
-    ai_logger.info(f"{action_prefix} '{action}' for IP {ip} with explanation: {explanation}")
-    action_logger.info(f"IP: {ip} - Action: {action} - Explanation: {explanation}")
-    print(f"{action_prefix} '{action}' for IP {ip} with explanation: {explanation}")  # Real-time console notification
-    
-    if action == "block":
-        block_ip(ip, "permanent")
-        ai_logger.info(f"Permanently blocked IP {ip} for reason: {explanation}")
-    elif action == "temp_block":
-        block_ip(ip, "temporary", TEMP_BLOCK_DURATION)
-        ai_logger.info(f"Temporarily blocked IP {ip} for {TEMP_BLOCK_DURATION} seconds. Reason: {explanation}")
-    elif action == "rate_limit":
-        ai_logger.info(f"Rate limited IP {ip} for reason: {explanation}")
-    elif action == "captcha":
-        ai_logger.info(f"Captcha challenge for IP {ip} for reason: {explanation}")
-    elif action == "watchlist":
-        ai_logger.info(f"Added IP {ip} to watchlist for reason: {explanation}")
-    elif action == "adjust_resources":
-        ai_logger.info(f"Adjusted server resources for reason: {explanation}")
-    elif action == "none":
-        ai_logger.info(f"No action taken for {ip}. Analysis: {explanation}")
-        print(f"No action taken for {ip}. Analysis: {explanation}")  # Real-time console notification
-    else:
-        ai_logger.warning(f"Unknown action '{action}' for {ip}. Using default action.")
-        print(f"Unknown action '{action}' for {ip}. Using default action.")  # Real-time console notification
-        ai_logger.info(f"Added IP {ip} to watchlist for unknown action. Reason: {explanation}")
-
-def capture_traffic(packet):
-    if IP in packet:
-        ip = packet[IP].src
-        if ip == "0.0.0.0" or ip in config["WHITELIST"]:
-            return  # Skip the server IP itself and whitelisted IPs
-        
-        packet_len = len(packet)
-        syn = 1 if packet.haslayer('TCP') and packet['TCP'].flags == 'S' else 0
-        udp = 1 if packet.haslayer('UDP') else 0
-        icmp = 1 if packet.haslayer('ICMP') else 0
-        http = 1 if packet.haslayer('HTTP') else 0
-        
-        update_traffic_data(ip, packet_len, syn, udp, icmp, http)
-
-def check_ai_mode():
-    try:
-        headers = {
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": "gpt-4-turbo",
-            "messages": [
-                {"role": "system", "content": "You are a network security expert."},
-                {"role": "user", "content": "Test message to check AI mode functionality."}
-            ]
-        }
-        response = requests.post(OPENAI_API_URL, headers=headers, json=payload, timeout=MAX_AI_RESPONSE_TIME)
-        response.raise_for_status()
-        return True
-    except:
-        return False
-
-def start_sniffing():
-    sniff(prn=capture_traffic, filter="ip", store=0)
-
-def main():
-    global ai_mode
-    # Print and log startup message
-    ai_mode = check_ai_mode()
-    startup_message = "Port Protection Script is starting and running..."
-    mode_message = "AI Mode" if ai_mode else "Offline Mode"
-    print(f"{startup_message} Operating in {mode_message}.")
-    logging.info(f"{startup_message} Operating in {mode_message}.")
-    
-    # Start traffic capture in a separate thread
-    traffic_thread = threading.Thread(target=start_sniffing)
-    traffic_thread.daemon = True
-    traffic_thread.start()
-    
-    # Main monitoring loop
-    while True:
-        unblock_ips()  # Unblock IPs that are temporarily blocked and have passed the duration
-        analyze_traffic()
-        
-        # Check if AI mode is still available
-        if ai_mode and not check_ai_mode():
-            ai_mode = False
-            alert_message = "AI Mode is not available. Switching to Offline Mode."
-            print(alert_message)
-            logging.warning(alert_message)
-        
-        time.sleep(60)  # Wait for 60 seconds before the next iteration
-
-if __name__ == "__main__":
-    main()
+        ai_logger
