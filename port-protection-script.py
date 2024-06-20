@@ -2,6 +2,7 @@ import os
 import requests
 import json
 import logging
+import time
 
 # Configuration Loading
 config = {
@@ -208,8 +209,10 @@ connection_count = {
 }
 
 def main():
-    analyze_traffic("192.168.1.100")
-    analyze_traffic("192.168.1.101")
+    while True:
+        for ip in packet_count.keys():
+            analyze_traffic(ip)
+        time.sleep(60)  # Wait for 60 seconds before the next iteration
 
 if __name__ == "__main__":
     main()
