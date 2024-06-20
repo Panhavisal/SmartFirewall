@@ -28,7 +28,7 @@ except ImportError:
 # Configuration Loading
 config = {
     "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
-    "OPENAI_API_URL": "https://api.openai.com/v1/engines/gpt-3.5-turbo/completions",
+    "OPENAI_API_URL": "https://api.openai.com/v1/chat/completions",
     "AI_PROMPT_TEMPLATE": """
     The current server status is as follows:
     - CPU Usage: {cpu_usage}%
@@ -203,10 +203,10 @@ def chatgpt_analyze(traffic_data):
     )
     
     payload = {
-        "model": "gpt-3.5-turbo",
+        "model": "gpt-4-turbo",
         "messages": [
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": "What action should be taken based on this data?"}
+            {"role": "system", "content": "You are a network security expert."},
+            {"role": "user", "content": prompt}
         ]
     }
     
