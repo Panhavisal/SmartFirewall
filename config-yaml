@@ -16,27 +16,43 @@ HTTP_FLOOD_THRESHOLD: 200
 PACKET_RATE_THRESHOLD: 1000  # packets per second
 BANDWIDTH_THRESHOLD: 10485760  # 10 MB/s in bytes
 
-# New AI action thresholds
-RATE_LIMIT_THRESHOLD: 50  # connections per minute
-TEMPORARY_BLOCK_TIME: 600  # seconds (10 minutes)
-CAPTCHA_CHALLENGE_THRESHOLD: 30  # suspicious requests
-ALERT_THRESHOLD: 20  # suspicious activities
+# Server health thresholds
+CPU_THRESHOLD: 80
+MEMORY_THRESHOLD: 80
+DISK_IO_THRESHOLD: 80
+
+# CAPTCHA settings
+CAPTCHA_LENGTH: 6
+CAPTCHA_EXPIRY: 300  # seconds
+CAPTCHA_MAX_ATTEMPTS: 3
 
 # Whitelist
 WHITELIST:
   - '192.168.1.1'
   - '10.0.0.1'
 
-# AI prompt template
-AI_PROMPT_TEMPLATE: >
-  You are a cybersecurity expert. Analyze the following network traffic data and suggest appropriate actions to mitigate potential threats.
-  Consider the following options:
-  1. Block IP (for severe threats)
-  2. Temporary block (for moderate threats, {TEMPORARY_BLOCK_TIME} seconds)
-  3. Rate limit (for suspicious activity, limit to {RATE_LIMIT_THRESHOLD} connections per minute)
-  4. CAPTCHA challenge (for potential bot activity)
-  5. Add to watchlist (for mild suspicion)
-  6. Send alert (for unusual patterns)
+# AI Prompt Template
+AI_PROMPT_TEMPLATE: |
+  You are an AI assistant focused on maintaining server stability and performance while protecting against DDoS attacks. 
+  Analyze the following network traffic data and server health metrics. Suggest appropriate actions to mitigate potential threats 
+  while ensuring the server continues to operate smoothly.
+
+  Server Health Metrics:
+  - CPU Usage: {cpu_usage}%
+  - Memory Usage: {memory_usage}%
+  - Disk I/O Utilization: {disk_io}%
+
+  Network Traffic Data:
+  {traffic_data}
+
+  Consider the following options and their impact on server performance:
+  1. Block IP (most severe, may impact legitimate traffic if used too broadly)
+  2. Temporary block (moderate, allows recovery of false positives)
+  3. Rate limit (less severe, helps manage traffic without full blocking)
+  4. CAPTCHA challenge (for potential bot activity, may slow down legitimate users)
+  5. Add to watchlist (for mild suspicion, no immediate impact)
+  6. Adjust server resources (e.g., scaling up, load balancing)
   7. No action (if behavior seems normal)
-  Provide your recommendation as a single word (e.g., "block", "temp_block", "rate_limit", "captcha", "watchlist", "alert", "none"),
-  followed by a brief explanation.
+
+  Provide your recommendation as a single word (e.g., "block", "temp_block", "rate_limit", "captcha", "watchlist", "adjust_resources", "none"), 
+  followed by a brief explanation. Prioritize server stability and performance in your decision.
