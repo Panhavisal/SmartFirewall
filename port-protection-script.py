@@ -3,6 +3,8 @@ import requests
 import json
 import logging
 import time
+import threading
+from scapy.all import sniff, IP
 
 # Configuration Loading
 config = {
@@ -22,7 +24,7 @@ config = {
     "PACKET_RATE_THRESHOLD": 1000,
     "SYN_FLOOD_THRESHOLD": 200,
     "HTTP_FLOOD_THRESHOLD": 300,
-    "WHITELIST": ["192.168.1.1", "10.0.0.1"],
+    "WHITELIST": ["192.168.1.1", "10.0.0.1"],  # Add server IP to whitelist
     "MAX_AI_RESPONSE_TIME": 10
 }
 
@@ -177,7 +179,7 @@ def take_action(ip, analysis):
         print(f"Unknown action '{action}' for {ip}. Using default action.")  # Real-time console notification
         add_to_watchlist(ip, f"Unknown action suggested: {explanation}")
 
-# Mock functions to replace placeholders
+# Functions to take actions
 def update_ip_data(ip, data, blocked):
     print(f"Updated IP data for {ip}: {data}, Blocked: {blocked}")
     ip_database["monitor"][ip] = data
@@ -201,31 +203,50 @@ def adjust_server_resources(reason):
     print(f"Adjusted server resources for reason: {reason}")
 
 # Example placeholders for traffic and connection metrics
-packet_count = {
-    "192.168.88.18": [1, 2, 3, 4]
-}
-bandwidth_usage = {
-    "192.168.88.18": [(1, 200), (2, 300)]
-}
-syn_flood_count = {
-    "192.168.88.18": 50
-}
-udp_flood_count = {
-    "192.168.88.18": 30
-}
-icmp_flood_count = {
-    "192.168.88.18": 5
-}
-http_flood_count = {
-    "192.168.88.18": 100
-}
-connection_count = {
-    "192.168.88.18": [1, 2, 3]
-}
+packet_count = {}
+bandwidth_usage = {}
+syn_flood_count = {}
+udp_flood_count = {}
+icmp_flood_count = {}
+http_flood_count = {}
+connection_count = {}
+
+def capture_traffic(packet):
+    if IP in packet:
+        ip = packet[IP].src
+        if ip == "0.0.0.0" or ip in config["WHITELIST"]:
+            return  # Skip the server IP itself and whitelisted IPs
+        
+        if ip not in packet_count:
+            packet_count[ip] = []
+            bandwidth_usage[ip] = []
+            syn_flood_count[ip] = 0
+            udp_flood_count[ip] = 0
+            icmp_flood_count[ip] = 0
+            http_flood_count[ip] = 0
+            connection_count[ip] = []
+        
+        # Update traffic data
+        packet_count[ip].append(1)
+        bandwidth_usage[ip].append((time.time(), len(packet)))
+        syn_flood_count[ip] += 1 if packet.haslayer('TCP') and packet['TCP'].flags == 'S' else 0
+        udp_flood_count[ip] += 1 if packet.haslayer('UDP') else 0
+        icmp_flood_count[ip] += 1 if packet.haslayer('ICMP') else 0
+        http_flood_count[ip] += 1 if packet.haslayer('HTTP') else 0
+        connection_count[ip].append(1)
+        
+def start_sniffing():
+    sniff(prn=capture_traffic, filter="ip", store=0)
 
 def main():
+    # Start traffic capture in a separate thread
+    traffic_thread = threading.Thread(target=start_sniffing)
+    traffic_thread.daemon = True
+    traffic_thread.start()
+    
+    # Main monitoring loop
     while True:
-        for ip in packet_count.keys():
+        for ip in list(packet_count.keys()):
             analyze_traffic(ip)
         time.sleep(60)  # Wait for 60 seconds before the next iteration
 
