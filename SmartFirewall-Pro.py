@@ -7,6 +7,7 @@ import logging
 import time
 import threading
 import sqlite3
+import yaml
 from scapy.all import sniff, IP
 from datetime import datetime, timedelta
 
@@ -25,32 +26,17 @@ try:
 except ImportError:
     install('requests')
 
-# Configuration Loading
-config = {
-    "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
-    "OPENAI_API_URL": "https://api.openai.com/v1/chat/completions",
-    "AI_PROMPT_TEMPLATE": """
-    The current server status is as follows:
-    - CPU Usage: {cpu_usage}%
-    - Memory Usage: {memory_usage}%
-    - Disk I/O: {disk_io} operations/sec
-    The following traffic data has been recorded:
-    {traffic_data}
-    Based on this information, please advise on the appropriate actions to take.
-    """,
-    "CPU_THRESHOLD": 80,
-    "MEMORY_THRESHOLD": 80,
-    "PACKET_RATE_THRESHOLD": 1000,
-    "SYN_FLOOD_THRESHOLD": 200,
-    "HTTP_FLOOD_THRESHOLD": 300,
-    "WHITELIST": ["192.168.1.1", "10.0.0.1"],  # Add server IP to whitelist
-    "MAX_AI_RESPONSE_TIME": 10,
-    "TEMP_BLOCK_DURATION": 300,  # Temporary block duration in seconds
-    "PERMANENT_BLOCK_THRESHOLD": 3  # Number of times an IP can be temporarily blocked before permanent block
-}
+try:
+    import yaml
+except ImportError:
+    install('pyyaml')
+
+# Load configuration from YAML file
+with open('config.yaml', 'r') as file:
+    config = yaml.safe_load(file)
 
 OPENAI_API_KEY = config.get("OPENAI_API_KEY")
-OPENAI_API_URL = config.get("OPENAI_API_URL")
+OPENAI_API_URL = config.get("OPENAI_API_URL", "https://api.openai.com/v1/chat/completions")
 AI_PROMPT_TEMPLATE = config.get("AI_PROMPT_TEMPLATE")
 CPU_THRESHOLD = config.get("CPU_THRESHOLD", 80)
 MEMORY_THRESHOLD = config.get("MEMORY_THRESHOLD", 80)
@@ -319,15 +305,36 @@ def capture_traffic(packet):
         http = 1 if packet.haslayer('HTTP') else 0
         
         update_traffic_data(ip, packet_len, syn, udp, icmp, http)
-        
+
+def check_ai_mode():
+    try:
+        headers = {
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "gpt-4-turbo",
+            "messages": [
+                {"role": "system", "content": "You are a network security expert."},
+                {"role": "user", "content": "Test message to check AI mode functionality."}
+            ]
+        }
+        response = requests.post(OPENAI_API_URL, headers=headers, json=payload, timeout=MAX_AI_RESPONSE_TIME)
+        response.raise_for_status()
+        return True
+    except:
+        return False
+
 def start_sniffing():
     sniff(prn=capture_traffic, filter="ip", store=0)
 
 def main():
     # Print and log startup message
+    ai_mode = check_ai_mode()
     startup_message = "Port Protection Script is starting and running..."
-    print(startup_message)
-    logging.info(startup_message)
+    mode_message = "AI Mode" if ai_mode else "Offline Mode"
+    print(f"{startup_message} Operating in {mode_message}.")
+    logging.info(f"{startup_message} Operating in {mode_message}.")
     
     # Start traffic capture in a separate thread
     traffic_thread = threading.Thread(target=start_sniffing)
@@ -338,6 +345,14 @@ def main():
     while True:
         unblock_ips()  # Unblock IPs that are temporarily blocked and have passed the duration
         analyze_traffic()
+        
+        # Check if AI mode is still available
+        if ai_mode and not check_ai_mode():
+            ai_mode = False
+            alert_message = "AI Mode is not available. Switching to Offline Mode."
+            print(alert_message)
+            logging.warning(alert_message)
+        
         time.sleep(60)  # Wait for 60 seconds before the next iteration
 
 if __name__ == "__main__":
