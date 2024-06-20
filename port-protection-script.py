@@ -239,6 +239,11 @@ def start_sniffing():
     sniff(prn=capture_traffic, filter="ip", store=0)
 
 def main():
+    # Print and log startup message
+    startup_message = "Port Protection Script is starting and running..."
+    print(startup_message)
+    logging.info(startup_message)
+    
     # Start traffic capture in a separate thread
     traffic_thread = threading.Thread(target=start_sniffing)
     traffic_thread.daemon = True
