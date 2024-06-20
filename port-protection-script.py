@@ -6,6 +6,7 @@ import json
 import logging
 import time
 import threading
+import sqlite3
 from scapy.all import sniff, IP
 
 # Function to install required libraries
@@ -64,11 +65,56 @@ action_handler = logging.FileHandler('aiaction.txt')
 action_logger.addHandler(action_handler)
 action_logger.setLevel(logging.INFO)
 
-# In-memory database for storing IP data
-ip_database = {
-    "blacklist": set(),
-    "monitor": {}
-}
+# Initialize SQLite database
+def init_db():
+    conn = sqlite3.connect('traffic_data.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS traffic (
+            ip TEXT,
+            packet_count INTEGER,
+            bandwidth_usage INTEGER,
+            syn_count INTEGER,
+            udp_count INTEGER,
+            icmp_count INTEGER,
+            http_count INTEGER,
+            connection_count INTEGER,
+            last_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+init_db()
+
+def update_traffic_data(ip, packet_len, syn, udp, icmp, http):
+    conn = sqlite3.connect('traffic_data.db')
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        INSERT INTO traffic (ip, packet_count, bandwidth_usage, syn_count, udp_count, icmp_count, http_count, connection_count)
+        VALUES (?, 1, ?, ?, ?, ?, ?, 1)
+        ON CONFLICT(ip) DO UPDATE SET
+        packet_count = packet_count + 1,
+        bandwidth_usage = bandwidth_usage + ?,
+        syn_count = syn_count + ?,
+        udp_count = udp_count + ?,
+        icmp_count = icmp_count + ?,
+        http_count = http_count + ?,
+        connection_count = connection_count + 1,
+        last_update = CURRENT_TIMESTAMP
+    ''', (ip, packet_len, syn, udp, icmp, http, packet_len, syn, udp, icmp, http))
+    
+    conn.commit()
+    conn.close()
+
+def get_traffic_data():
+    conn = sqlite3.connect('traffic_data.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM traffic')
+    data = cursor.fetchall()
+    conn.close()
+    return data
 
 def get_server_health():
     # Placeholder function to simulate getting server health metrics
@@ -134,29 +180,28 @@ def fallback_analysis(traffic_data, server_health):
     else:
         return "watchlist, Suspicious activity detected"
 
-def analyze_traffic(ip):
-    data = {
-        "ip": ip,
-        "packet_count": len(packet_count.get(ip, [])),
-        "bandwidth_usage": sum(s for _, s in bandwidth_usage.get(ip, [])),
-        "syn_count": syn_flood_count.get(ip, 0),
-        "udp_count": udp_flood_count.get(ip, 0),
-        "icmp_count": icmp_flood_count.get(ip, 0),
-        "http_count": http_flood_count.get(ip, 0),
-        "connection_count": len(connection_count.get(ip, []))
-    }
-    ai_logger.info(f"Analyzing traffic data for IP {ip}: {data}")
-    print(f"Analyzing traffic data for IP {ip}: {data}")  # Real-time console notification
-    update_ip_data(ip, data, False)  # Store the data, not blocked yet
-    
-    server_health = get_server_health()
-    
-    analysis = chatgpt_analyze(data)
-    if analysis is None:
-        ai_logger.warning("AI analysis failed. Using fallback mechanism.")
-        analysis = fallback_analysis(data, server_health)
-    
-    take_action(ip, analysis)
+def analyze_traffic():
+    traffic_data = get_traffic_data()
+    for data in traffic_data:
+        ip, packet_count, bandwidth_usage, syn_count, udp_count, icmp_count, http_count, connection_count, last_update = data
+        data_dict = {
+            "ip": ip,
+            "packet_count": packet_count,
+            "bandwidth_usage": bandwidth_usage,
+            "syn_count": syn_count,
+            "udp_count": udp_count,
+            "icmp_count": icmp_count,
+            "http_count": http_count,
+            "connection_count": connection_count
+        }
+        ai_logger.info(f"Analyzing traffic data for IP {ip}: {data_dict}")
+        print(f"Analyzing traffic data for IP {ip}: {data_dict}")  # Real-time console notification
+        server_health = get_server_health()
+        analysis = chatgpt_analyze(data_dict)
+        if analysis is None:
+            ai_logger.warning("AI analysis failed. Using fallback mechanism.")
+            analysis = fallback_analysis(data_dict, server_health)
+        take_action(ip, analysis)
 
 def take_action(ip, analysis):
     if ip in WHITELIST:
@@ -197,10 +242,6 @@ def take_action(ip, analysis):
         add_to_watchlist(ip, f"Unknown action suggested: {explanation}")
 
 # Functions to take actions
-def update_ip_data(ip, data, blocked):
-    print(f"Updated IP data for {ip}: {data}, Blocked: {blocked}")
-    ip_database["monitor"][ip] = data
-
 def block_ip(ip, reason):
     print(f"Blocked IP {ip} for reason: {reason}")
 
@@ -219,38 +260,19 @@ def add_to_watchlist(ip, reason):
 def adjust_server_resources(reason):
     print(f"Adjusted server resources for reason: {reason}")
 
-# Example placeholders for traffic and connection metrics
-packet_count = {}
-bandwidth_usage = {}
-syn_flood_count = {}
-udp_flood_count = {}
-icmp_flood_count = {}
-http_flood_count = {}
-connection_count = {}
-
 def capture_traffic(packet):
     if IP in packet:
         ip = packet[IP].src
         if ip == "0.0.0.0" or ip in config["WHITELIST"]:
             return  # Skip the server IP itself and whitelisted IPs
         
-        if ip not in packet_count:
-            packet_count[ip] = []
-            bandwidth_usage[ip] = []
-            syn_flood_count[ip] = 0
-            udp_flood_count[ip] = 0
-            icmp_flood_count[ip] = 0
-            http_flood_count[ip] = 0
-            connection_count[ip] = []
+        packet_len = len(packet)
+        syn = 1 if packet.haslayer('TCP') and packet['TCP'].flags == 'S' else 0
+        udp = 1 if packet.haslayer('UDP') else 0
+        icmp = 1 if packet.haslayer('ICMP') else 0
+        http = 1 if packet.haslayer('HTTP') else 0
         
-        # Update traffic data
-        packet_count[ip].append(1)
-        bandwidth_usage[ip].append((time.time(), len(packet)))
-        syn_flood_count[ip] += 1 if packet.haslayer('TCP') and packet['TCP'].flags == 'S' else 0
-        udp_flood_count[ip] += 1 if packet.haslayer('UDP') else 0
-        icmp_flood_count[ip] += 1 if packet.haslayer('ICMP') else 0
-        http_flood_count[ip] += 1 if packet.haslayer('HTTP') else 0
-        connection_count[ip].append(1)
+        update_traffic_data(ip, packet_len, syn, udp, icmp, http)
         
 def start_sniffing():
     sniff(prn=capture_traffic, filter="ip", store=0)
@@ -268,8 +290,7 @@ def main():
     
     # Main monitoring loop
     while True:
-        for ip in list(packet_count.keys()):
-            analyze_traffic(ip)
+        analyze_traffic()
         time.sleep(60)  # Wait for 60 seconds before the next iteration
 
 if __name__ == "__main__":
